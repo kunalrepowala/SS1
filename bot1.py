@@ -12,6 +12,7 @@ from telegram import (
     Bot,
 )
 from telegram.ext import (
+    Application,
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,

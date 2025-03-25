@@ -27,9 +27,9 @@ from motor.motor_asyncio import AsyncIOMotorClient
 nest_asyncio.apply()
 
 # --- CONFIGURATION ---
-MAIN_BOT_TOKEN = "7660007316:AAHnmA8mN8R5_GWEVxUtD-FG1cd5QViVHmw"
+MAIN_BOT_TOKEN = "7793725251:AAEuCnbRw93DxsQnkdX3NgIJkJ1hJNnphZ4"
 ADMIN_USER_ID = 6773787379
-MEDIA_CHANNEL_ID = -1002611812353  # Channel to forward all media
+MEDIA_CHANNEL_ID = -1002444008797  # Channel to forward all media
 MONGO_URL = "mongodb+srv://kunalrepowalaclone1:RMZDIN4lBnjAz3cZ@cluster0.96iuq.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 DB_NAME = "Cluster0"
 

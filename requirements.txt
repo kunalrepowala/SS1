@@ -1,0 +1,10 @@
+python-telegram-bot==20.3
+aiohttp
+nest_asyncio
+beautifulsoup4
+honcho
+requests
+pymongo
+motor
+pillow
+qrcode

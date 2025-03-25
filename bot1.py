@@ -27,9 +27,9 @@ from motor.motor_asyncio import AsyncIOMotorClient
 nest_asyncio.apply()
 
 # --- CONFIGURATION ---
-MAIN_BOT_TOKEN = "7660007316:AAHnmA8mN8R5_GWEVxUtD-FG1cd5QViVHmw"
+MAIN_BOT_TOKEN = "7793725251:AAEuCnbRw93DxsQnkdX3NgIJkJ1hJNnphZ4"
 ADMIN_USER_ID = 6773787379
-MEDIA_CHANNEL_ID = -1002611812353  # Channel to forward all media
+MEDIA_CHANNEL_ID = -1002444008797  # Channel to forward all media
 MONGO_URL = "mongodb+srv://kunalrepowalaclone1:RMZDIN4lBnjAz3cZ@cluster0.96iuq.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 DB_NAME = "Cluster0"
 WAITING_FOR_BOT_TOKEN = 1
@@ -82,7 +82,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• /download - Enable download mode (admin only on main bot).\n"
         "   For non-admin users, clone your own bot to generate download links.\n"
         "• /clone - Manage your cloned bots (add new bot tokens or mark one inactive).\n"
-        "• /data - (Admin only) Show all clone bot data.\n\n"
         "Usage:\n"
         "1️⃣ Send any media (photo, video, GIF, sticker, voice note, etc.) to get its media ID.\n"
         "2️⃣ If download mode is enabled, the next media message will yield a download link.\n\n"
@@ -332,7 +331,7 @@ async def run_clone_bot(token: str) -> None:
 
 # --- CLONE INACTIVITY MONITOR ---
 async def monitor_clone_inactivity(main_app: Application) -> None:
-    INACTIVITY_THRESHOLD = 30  # seconds
+    INACTIVITY_THRESHOLD = 3600  # seconds
     while True:
         now = time.time()
         tokens_to_mark = []
@@ -351,7 +350,7 @@ async def monitor_clone_inactivity(main_app: Application) -> None:
                 await main_app.bot.send_message(
                     chat_id=owner_id,
                     text=(
-                        f"⚠️ Your Bot Removed (@{bot_name}) for inactivity for 30 Seconds.\n"
+                        f"⚠️ Your Bot Removed (@{bot_name}) for inactivity for 1 Hours.\n"
                         "💾 Again Clone Using /clone"
                     ),
                 )

